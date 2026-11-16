@@ -14,8 +14,8 @@ import {
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { FilterPanel } from './components/FilterPanel';
 import { GoogleMapView } from './components/GoogleMapView';
+import { LeafletMapView } from './components/LeafletMapView';
 import { MobileBottomSheet, type SheetStage } from './components/MobileBottomSheet';
-import { MockInteractiveMap } from './components/MockInteractiveMap';
 import { RandomPickerModal } from './components/RandomPickerModal';
 import { RestaurantList } from './components/RestaurantList';
 import { LANDMARK_PRESETS, MOCK_RESTAURANTS } from './data/mockRestaurants';
@@ -33,6 +33,7 @@ import {
   isPointInPolygon,
 } from './utils/geo';
 import { geocodeAddress, searchNearbyPlacesNew } from './utils/placesApi';
+import { searchNominatimLocation, searchOsmRestaurants } from './utils/osmApi';
 
 const DEFAULT_FILTERS: FilterState = {
   cuisines: [],
@@ -65,6 +66,7 @@ export function App() {
 
   // 資料與載入狀態
   const [liveRestaurants, setLiveRestaurants] = useState<Restaurant[]>([]);
+  const [osmRestaurants, setOsmRestaurants] = useState<Restaurant[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   // 篩選、排除與選取狀態
@@ -78,6 +80,36 @@ export function App() {
   const [mobileTab, setMobileTab] = useState<'list' | 'filter'>('list');
   const [isRandomModalOpen, setIsRandomModalOpen] = useState(false);
   const [isApiModalOpen, setIsApiModalOpen] = useState(false);
+
+  // 免 API Key 模式：向 OpenStreetMap Overpass API 請求真實餐廳資料
+  const fetchOsmPlaces = useCallback(async () => {
+    if (appMode !== 'mock') return;
+    setIsLoading(true);
+    try {
+      let reqCenter = circleCenter;
+      let reqRadius = radiusMeters;
+
+      if (drawMode === 'polygon' && isPolygonClosed && polygon.length >= 3) {
+        const mbc = computeMinimumBoundingCircle(polygon);
+        reqCenter = mbc.center;
+        reqRadius = mbc.radiusMeters;
+      }
+
+      const results = await searchOsmRestaurants(reqCenter, reqRadius);
+      setOsmRestaurants(results.length > 0 ? results : MOCK_RESTAURANTS);
+    } catch {
+      // 若 Overpass API 暫時忙碌，無縫降級為內建台灣精選餐廳資料
+      setOsmRestaurants(MOCK_RESTAURANTS);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [appMode, circleCenter, radiusMeters, drawMode, isPolygonClosed, polygon]);
+
+  useEffect(() => {
+    if (appMode === 'mock') {
+      fetchOsmPlaces();
+    }
+  }, [appMode, fetchOsmPlaces]);
 
   // Live Mode 向 Google Places API (New) 請求資料
   const fetchLivePlaces = useCallback(async () => {
@@ -110,7 +142,7 @@ export function App() {
   }, [appMode, fetchLivePlaces]);
 
   // 原始資料來源
-  const rawSourceRestaurants = appMode === 'live' ? liveRestaurants : MOCK_RESTAURANTS;
+  const rawSourceRestaurants = appMode === 'live' ? liveRestaurants : osmRestaurants;
 
   // 計算距離並執行空間（圓形／多邊形）+ 多維度篩選
   const filteredRestaurants = useMemo(() => {
@@ -236,6 +268,15 @@ export function App() {
         setCircleCenter(loc);
         return;
       }
+    } else {
+      setIsLoading(true);
+      const loc = await searchNominatimLocation(q);
+      setIsLoading(false);
+      if (loc) {
+        setMapCenter(loc);
+        setCircleCenter(loc);
+        return;
+      }
     }
 
     // 模糊比對預設區域
@@ -302,7 +343,7 @@ export function App() {
                     : 'bg-amber-100 text-amber-800'
                 }`}
               >
-                {appMode === 'live' ? 'Live Google Maps' : '演示模擬模式'}
+                {appMode === 'live' ? 'Live Google Maps' : '免 API 即時地圖 (OSM)'}
               </span>
             </div>
             <p className="hidden sm:block text-xs text-slate-500 truncate">
@@ -517,7 +558,7 @@ export function App() {
               onSdkError={(msg) => setApiError(msg)}
             />
           ) : (
-            <MockInteractiveMap
+            <LeafletMapView
               center={mapCenter}
               circleCenter={circleCenter}
               radiusMeters={radiusMeters}
@@ -525,9 +566,7 @@ export function App() {
               polygon={polygon}
               isPolygonClosed={isPolygonClosed}
               restaurants={filteredRestaurants}
-              allAreaRestaurants={MOCK_RESTAURANTS}
               selectedId={selectedId}
-              onCenterChange={setMapCenter}
               onCircleCenterChange={setCircleCenter}
               onPolygonChange={(pts, closed) => {
                 setPolygon(pts);
