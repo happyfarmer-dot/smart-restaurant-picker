@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CircleDot,
   Crosshair,
   Dices,
+  ExternalLink,
   Filter,
   KeyRound,
   List,
@@ -27,6 +28,7 @@ import type {
   Restaurant,
 } from './types/restaurant';
 import {
+  buildGoogleMapsAreaSearchUrl,
   computeMinimumBoundingCircle,
   getPolygonCentroid,
   haversineDistanceMeters,
@@ -38,7 +40,7 @@ import { searchNominatimLocation, searchOsmRestaurants } from './utils/osmApi';
 const DEFAULT_FILTERS: FilterState = {
   cuisines: [],
   priceLevels: [],
-  minRating: 4.0,
+  minRating: 0,
   minReviews: 0,
   onlyOpenNow: true,
   tags: [],
@@ -47,6 +49,12 @@ const DEFAULT_FILTERS: FilterState = {
 };
 
 const STORAGE_KEY_API = 'smart_picker_google_api_key';
+
+function mergeRestaurants(osmList: Restaurant[], mockList: Restaurant[]): Restaurant[] {
+  const seenNames = new Set(osmList.map((r) => r.name.trim().toLowerCase()));
+  const extraMocks = mockList.filter((m) => !seenNames.has(m.name.trim().toLowerCase()));
+  return [...osmList, ...extraMocks];
+}
 
 export function App() {
   const [appMode, setAppMode] = useState<AppMode>('mock');
@@ -64,10 +72,11 @@ export function App() {
   // 搜尋地標輸入
   const [locationQuery, setLocationQuery] = useState('');
 
-  // 資料與載入狀態
+  // 資料與載入狀態（初始帶入內建精選資料，確保頁面開啟立即有清單）
   const [liveRestaurants, setLiveRestaurants] = useState<Restaurant[]>([]);
-  const [osmRestaurants, setOsmRestaurants] = useState<Restaurant[]>([]);
+  const [osmRestaurants, setOsmRestaurants] = useState<Restaurant[]>(MOCK_RESTAURANTS);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const osmCacheRef = useRef<Map<string, Restaurant[]>>(new Map());
 
   // 篩選、排除與選取狀態
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
@@ -81,35 +90,50 @@ export function App() {
   const [isRandomModalOpen, setIsRandomModalOpen] = useState(false);
   const [isApiModalOpen, setIsApiModalOpen] = useState(false);
 
-  // 免 API Key 模式：向 OpenStreetMap Overpass API 請求真實餐廳資料
-  const fetchOsmPlaces = useCallback(async () => {
-    if (appMode !== 'mock') return;
-    setIsLoading(true);
-    try {
-      let reqCenter = circleCenter;
-      let reqRadius = radiusMeters;
-
-      if (drawMode === 'polygon' && isPolygonClosed && polygon.length >= 3) {
-        const mbc = computeMinimumBoundingCircle(polygon);
-        reqCenter = mbc.center;
-        reqRadius = mbc.radiusMeters;
-      }
-
-      const results = await searchOsmRestaurants(reqCenter, reqRadius);
-      setOsmRestaurants(results.length > 0 ? results : MOCK_RESTAURANTS);
-    } catch {
-      // 若 Overpass API 暫時忙碌，無縫降級為內建台灣精選餐廳資料
-      setOsmRestaurants(MOCK_RESTAURANTS);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [appMode, circleCenter, radiusMeters, drawMode, isPolygonClosed, polygon]);
-
+  // 免 API Key 模式：防抖 + 快取向 OpenStreetMap Overpass API 請求真實餐廳資料
   useEffect(() => {
-    if (appMode === 'mock') {
-      fetchOsmPlaces();
+    if (appMode !== 'mock') return;
+
+    let reqCenter = circleCenter;
+    let reqRadius = radiusMeters;
+
+    if (drawMode === 'polygon' && isPolygonClosed && polygon.length >= 3) {
+      const mbc = computeMinimumBoundingCircle(polygon);
+      reqCenter = mbc.center;
+      reqRadius = mbc.radiusMeters;
     }
-  }, [appMode, fetchOsmPlaces]);
+
+    const cacheKey = `${reqCenter.lat.toFixed(3)}_${reqCenter.lng.toFixed(3)}_${Math.max(1500, Math.ceil(reqRadius / 500) * 500)}`;
+    const cached = osmCacheRef.current.get(cacheKey);
+    if (cached) {
+      setOsmRestaurants(mergeRestaurants(cached, MOCK_RESTAURANTS));
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setIsLoading(true);
+      try {
+        const results = await searchOsmRestaurants(reqCenter, reqRadius);
+        if (!cancelled) {
+          osmCacheRef.current.set(cacheKey, results);
+          setOsmRestaurants(mergeRestaurants(results, MOCK_RESTAURANTS));
+        }
+      } catch {
+        // 若所有 Overpass 鏡像皆忙碌，保留現有或精選台灣資料
+        if (!cancelled) {
+          setOsmRestaurants((prev) => (prev.length > 0 ? prev : MOCK_RESTAURANTS));
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [appMode, circleCenter, radiusMeters, drawMode, isPolygonClosed, polygon]);
 
   // Live Mode 向 Google Places API (New) 請求資料
   const fetchLivePlaces = useCallback(async () => {
@@ -144,19 +168,33 @@ export function App() {
   // 原始資料來源
   const rawSourceRestaurants = appMode === 'live' ? liveRestaurants : osmRestaurants;
 
+  const activeSearchCenter = useMemo(() => {
+    return drawMode === 'polygon' && isPolygonClosed && polygon.length >= 3
+      ? getPolygonCentroid(polygon)
+      : circleCenter;
+  }, [drawMode, isPolygonClosed, polygon, circleCenter]);
+
+  const activeSearchRadius = useMemo(() => {
+    if (drawMode === 'polygon' && isPolygonClosed && polygon.length >= 3) {
+      return computeMinimumBoundingCircle(polygon).radiusMeters;
+    }
+    return radiusMeters;
+  }, [drawMode, isPolygonClosed, polygon, radiusMeters]);
+
+  const googleMapsAreaUrl = useMemo(() => {
+    return buildGoogleMapsAreaSearchUrl(activeSearchCenter, activeSearchRadius, filters);
+  }, [activeSearchCenter, activeSearchRadius, filters]);
+
   // 計算距離並執行空間（圓形／多邊形）+ 多維度篩選
   const filteredRestaurants = useMemo(() => {
-    const refCenter =
-      drawMode === 'polygon' && isPolygonClosed && polygon.length >= 3
-        ? getPolygonCentroid(polygon)
-        : circleCenter;
-
     const q = filters.searchQuery.trim().toLowerCase();
 
     const list = rawSourceRestaurants
       .map((r) => ({
         ...r,
-        distanceMeters: Math.round(haversineDistanceMeters(refCenter, { lat: r.lat, lng: r.lng })),
+        distanceMeters: Math.round(
+          haversineDistanceMeters(activeSearchCenter, { lat: r.lat, lng: r.lng })
+        ),
       }))
       .filter((r) => {
         if (excludedIds.includes(r.id)) return false;
@@ -168,7 +206,6 @@ export function App() {
           if (isPolygonClosed && polygon.length >= 3) {
             if (!isPointInPolygon({ lat: r.lat, lng: r.lng }, polygon)) return false;
           } else {
-            // 尚未封閉多邊形時，暫時以距離 3km 內顯示候選
             if ((r.distanceMeters ?? Infinity) > 3500) return false;
           }
         }
@@ -177,8 +214,13 @@ export function App() {
         if (filters.onlyOpenNow && !r.isOpenNow) return false;
         if (filters.cuisines.length > 0 && !filters.cuisines.includes(r.cuisine)) return false;
         if (filters.priceLevels.length > 0 && !filters.priceLevels.includes(r.priceLevel)) return false;
-        if (r.rating < filters.minRating) return false;
-        if (r.reviewCount < filters.minReviews) return false;
+
+        // OSM 無即時 Google 星等與評論數，僅在具備評分資料（Google API / 精選資料）時才依評分門檻過濾
+        if (r.source !== 'osm') {
+          if (filters.minRating > 0 && r.rating < filters.minRating) return false;
+          if (filters.minReviews > 0 && r.reviewCount < filters.minReviews) return false;
+        }
+
         for (const tag of filters.tags) {
           if (!r.tags.includes(tag)) return false;
         }
@@ -211,10 +253,10 @@ export function App() {
     return list;
   }, [
     rawSourceRestaurants,
+    activeSearchCenter,
     drawMode,
     isPolygonClosed,
     polygon,
-    circleCenter,
     radiusMeters,
     excludedIds,
     filters,
@@ -248,10 +290,8 @@ export function App() {
     const q = locationQuery.trim();
     if (!q) return;
 
-    // 先比對內建台灣地標關鍵字
     const matchedPreset = LANDMARK_PRESETS.find((p) =>
-      p.label.toLowerCase().includes(q.toLowerCase()) ||
-      q.split('').some(() => p.label.includes(q))
+      p.label.toLowerCase().includes(q.toLowerCase())
     );
     if (matchedPreset) {
       setMapCenter(matchedPreset.center);
@@ -279,7 +319,6 @@ export function App() {
       }
     }
 
-    // 模糊比對預設區域
     if (q.includes('台中') || q.includes('逢甲') || q.includes('西屯')) {
       const target = LANDMARK_PRESETS[2].center;
       setMapCenter(target);
@@ -308,10 +347,12 @@ export function App() {
   const handleRelaxFilters = () => {
     setFilters({
       ...DEFAULT_FILTERS,
-      minRating: 3.5,
+      minRating: 0,
+      minReviews: 0,
       onlyOpenNow: false,
     });
-    setRadiusMeters((r) => Math.max(r, 2000));
+    setExcludedIds([]);
+    setRadiusMeters((r) => Math.max(r, 2500));
   };
 
   const handleSaveApiConfig = (nextMode: AppMode, nextKey: string) => {
@@ -325,7 +366,7 @@ export function App() {
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-slate-50 text-slate-900">
-      {/* 頂部導覽列（桌面 + 手機共用精簡列） */}
+      {/* 頂部導覽列 */}
       <header className="shrink-0 bg-white border-b border-slate-200 px-3 lg:px-4 py-2.5 flex items-center justify-between gap-2 z-30">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-9 h-9 rounded-xl bg-orange-500 text-white flex items-center justify-center shrink-0 shadow-sm">
@@ -340,23 +381,34 @@ export function App() {
                 className={`hidden sm:inline-flex text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                   appMode === 'live'
                     ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-amber-100 text-amber-800'
+                    : 'bg-sky-100 text-sky-800'
                 }`}
               >
                 {appMode === 'live' ? 'Live Google Maps' : '免 API 即時地圖 (OSM)'}
               </span>
             </div>
             <p className="hidden sm:block text-xs text-slate-500 truncate">
-              圈選街區範圍 × 防洗評價過濾 × 一鍵導航 Google Maps
+              圈選街區範圍 × 多條件篩選 × 一鍵跳轉 Google Maps 查看評價與導航
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <a
+            href={googleMapsAreaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 sm:px-3 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition shadow-sm"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">在 Google Maps 搜此範圍</span>
+            <span className="md:hidden">Google Maps</span>
+          </a>
+
           <button
             type="button"
             onClick={() => setIsRandomModalOpen(true)}
-            className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition shadow-sm cursor-pointer"
+            className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 sm:px-3 py-2 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition shadow-sm cursor-pointer"
           >
             <Dices className="w-4 h-4" />
             <span className="hidden sm:inline">幫我抽一家</span>
@@ -366,10 +418,10 @@ export function App() {
           <button
             type="button"
             onClick={() => setIsApiModalOpen(true)}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition cursor-pointer"
           >
             <KeyRound className="w-3.5 h-3.5 text-slate-500" />
-            <span className="hidden sm:inline">API Key 設定</span>
+            <span className="hidden lg:inline">API Key 設定</span>
           </button>
         </div>
       </header>
@@ -383,16 +435,15 @@ export function App() {
             onClick={() => setAppMode('mock')}
             className="font-semibold underline cursor-pointer"
           >
-            切換回演示模擬模式
+            切換回免 API 即時地圖
           </button>
         </div>
       )}
 
-      {/* 主體雙欄佈局：桌面左側 420px + 右側全螢幕地圖 */}
+      {/* 主體雙欄佈局 */}
       <div className="flex-1 flex min-h-0 relative overflow-hidden">
         {/* 桌面版左側面板 (420px) */}
         <aside className="hidden lg:flex w-[420px] shrink-0 flex-col border-r border-slate-200 bg-slate-50 min-h-0">
-          {/* 頁籤切換：建議清單 / 進階篩選 */}
           <div className="shrink-0 p-3 bg-white border-b border-slate-200 flex items-center gap-2">
             <button
               type="button"
@@ -420,19 +471,20 @@ export function App() {
             </button>
           </div>
 
-          {/* 可捲動內容區 */}
           <div className="flex-1 overflow-y-auto p-3.5">
             {desktopTab === 'list' ? (
               <RestaurantList
                 restaurants={filteredRestaurants}
                 isLoading={isLoading}
                 selectedId={selectedId}
+                googleMapsAreaUrl={googleMapsAreaUrl}
                 onSelect={handleSelectRestaurant}
                 onExclude={(id) => setExcludedIds((prev) => [...prev, id])}
                 onRelaxFilters={handleRelaxFilters}
               />
             ) : (
               <FilterPanel
+                appMode={appMode}
                 filters={filters}
                 onChange={setFilters}
                 onRelaxFilters={handleRelaxFilters}
@@ -446,8 +498,7 @@ export function App() {
         {/* 右側 / 手機全螢幕互動地圖區 */}
         <main className="flex-1 relative min-w-0 h-full">
           {/* 頂部浮動搜尋與圈選工具列 */}
-          <div className="absolute top-3 left-3 right-3 z-20 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pointer-events-none">
-            {/* 地標搜尋 + GPS */}
+          <div className="absolute top-3 left-3 right-3 z-[400] flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pointer-events-none">
             <form
               onSubmit={handleLocationSearch}
               className="pointer-events-auto flex items-center gap-1.5 bg-white/95 backdrop-blur border border-slate-200 rounded-2xl p-1.5 shadow-md flex-1 max-w-md"
@@ -457,7 +508,7 @@ export function App() {
                 type="text"
                 value={locationQuery}
                 onChange={(e) => setLocationQuery(e.target.value)}
-                placeholder="輸入地標（如：台北信義區、台中西屯區）"
+                placeholder="輸入地標（如：台北信義區、逢甲夜市）"
                 className="flex-1 text-xs bg-transparent focus:outline-none text-slate-800 placeholder:text-slate-400 min-w-0"
               />
               <select
@@ -487,7 +538,6 @@ export function App() {
               </button>
             </form>
 
-            {/* 雙模式範圍圈選切換 + 半徑滑桿 */}
             <div className="pointer-events-auto bg-white/95 backdrop-blur border border-slate-200 rounded-2xl p-1.5 shadow-md flex flex-wrap items-center gap-2">
               <div className="flex items-center bg-slate-100 rounded-xl p-0.5">
                 <button
@@ -537,7 +587,6 @@ export function App() {
             </div>
           </div>
 
-          {/* 地圖渲染核心 */}
           {appMode === 'live' && apiKey ? (
             <GoogleMapView
               apiKey={apiKey}
@@ -624,6 +673,7 @@ export function App() {
             restaurants={filteredRestaurants}
             isLoading={isLoading}
             selectedId={selectedId}
+            googleMapsAreaUrl={googleMapsAreaUrl}
             onSelect={(r) => {
               handleSelectRestaurant(r);
               setMobileSheetStage('half');
@@ -633,6 +683,7 @@ export function App() {
           />
         ) : (
           <FilterPanel
+            appMode={appMode}
             filters={filters}
             onChange={setFilters}
             onRelaxFilters={handleRelaxFilters}
@@ -646,8 +697,10 @@ export function App() {
       <RandomPickerModal
         isOpen={isRandomModalOpen}
         candidates={filteredRestaurants}
+        googleMapsAreaUrl={googleMapsAreaUrl}
         onClose={() => setIsRandomModalOpen(false)}
         onFocusRestaurant={handleSelectRestaurant}
+        onRelaxFilters={handleRelaxFilters}
       />
 
       <ApiKeyModal

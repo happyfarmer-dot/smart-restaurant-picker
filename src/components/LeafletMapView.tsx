@@ -194,9 +194,10 @@ export const LeafletMapView: React.FC<LeafletMapViewProps> = ({
       const bg = isSelected ? '#dc2626' : '#0f172a';
       const size = isSelected ? 32 : 26;
 
+      const labelText = r.source === 'osm' ? '食' : r.rating.toFixed(1);
       const icon = L.divIcon({
         className: 'restaurant-marker',
-        html: `<div style="width:${size}px;height:${size}px;border-radius:9999px;background:${bg};color:#fff;font-weight:700;font-size:${isSelected ? 11 : 10}px;display:flex;align-items:center;justify-content:center;border:2.5px solid #fff;box-shadow:0 3px 8px rgba(0,0,0,0.3);cursor:pointer;">${r.rating.toFixed(1)}</div>`,
+        html: `<div style="width:${size}px;height:${size}px;border-radius:9999px;background:${bg};color:#fff;font-weight:700;font-size:${isSelected ? 11 : 10}px;display:flex;align-items:center;justify-content:center;border:2.5px solid #fff;box-shadow:0 3px 8px rgba(0,0,0,0.3);cursor:pointer;">${labelText}</div>`,
         iconSize: [size, size],
         iconAnchor: [size / 2, size / 2],
       });

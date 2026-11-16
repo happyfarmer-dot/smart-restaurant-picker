@@ -1,20 +1,24 @@
 import React, { useEffect, useState } from 'react';
-import { Dices, ExternalLink, MapPin, RefreshCw, Sparkles, Star, X } from 'lucide-react';
+import { Dices, ExternalLink, MapPin, RefreshCw, RotateCcw, Sparkles, Star, X } from 'lucide-react';
 import { PRICE_OPTIONS, type Restaurant } from '../types/restaurant';
 import { buildGoogleMapsDeepLink, formatDistanceAndEta } from '../utils/geo';
 
 interface RandomPickerModalProps {
   isOpen: boolean;
   candidates: Restaurant[];
+  googleMapsAreaUrl: string;
   onClose: () => void;
   onFocusRestaurant: (restaurant: Restaurant) => void;
+  onRelaxFilters: () => void;
 }
 
 export const RandomPickerModal: React.FC<RandomPickerModalProps> = ({
   isOpen,
   candidates,
+  googleMapsAreaUrl,
   onClose,
   onFocusRestaurant,
+  onRelaxFilters,
 }) => {
   const [drawnIds, setDrawnIds] = useState<string[]>([]);
   const [picked, setPicked] = useState<Restaurant | null>(null);
@@ -30,7 +34,6 @@ export const RandomPickerModal: React.FC<RandomPickerModalProps> = ({
     let pool = candidates.filter((r) => !excludeIds.includes(r.id));
     let nextExclude = excludeIds;
     if (pool.length === 0) {
-      // 若全部抽過一輪則重設紀錄
       pool = candidates;
       nextExclude = [];
     }
@@ -58,12 +61,13 @@ export const RandomPickerModal: React.FC<RandomPickerModalProps> = ({
       runDraw([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [isOpen, candidates.length]);
 
   if (!isOpen) return null;
 
   const priceObj = picked ? PRICE_OPTIONS.find((p) => p.level === picked.priceLevel) : null;
   const eta = picked ? formatDistanceAndEta(picked.distanceMeters ?? 0) : null;
+  const isOsm = picked?.source === 'osm';
 
   return (
     <div
@@ -89,8 +93,31 @@ export const RandomPickerModal: React.FC<RandomPickerModalProps> = ({
         </div>
 
         {candidates.length === 0 ? (
-          <div className="py-6 text-center text-xs text-slate-500">
-            目前篩選清單內沒有餐廳可抽籤，請先放寬篩選條件或擴大圈選範圍。
+          <div className="py-4 text-center space-y-3">
+            <p className="text-xs text-slate-500">
+              目前篩選清單內沒有餐廳可抽籤，請先放寬篩選條件、擴大圈選範圍，或直接開啟 Google Maps 查看附近餐廳。
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onRelaxFilters();
+                }}
+                className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold py-2.5 px-4 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                一鍵放寬條件並擴大範圍
+              </button>
+              <a
+                href={googleMapsAreaUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold py-2.5 px-4 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition"
+              >
+                直接在 Google Maps 搜此範圍
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
           </div>
         ) : isSpinning ? (
           <div className="py-10 flex flex-col items-center justify-center space-y-3 bg-orange-50/70 rounded-2xl border border-orange-100">
@@ -111,12 +138,20 @@ export const RandomPickerModal: React.FC<RandomPickerModalProps> = ({
 
             <h3 className="text-lg font-extrabold text-slate-900">{picked.name}</h3>
 
-            <div className="flex items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 font-bold text-amber-600">
-                <Star className="w-4 h-4 fill-amber-500 text-amber-500" />
-                {picked.rating.toFixed(1)}
-              </span>
-              <span className="text-slate-500">({picked.reviewCount.toLocaleString()} 則評論)</span>
+            <div className="flex items-center gap-2 text-xs flex-wrap">
+              {isOsm ? (
+                <span className="font-medium text-sky-700 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-100">
+                  OpenStreetMap 實景收錄
+                </span>
+              ) : (
+                <>
+                  <span className="inline-flex items-center gap-1 font-bold text-amber-600">
+                    <Star className="w-4 h-4 fill-amber-500 text-amber-500" />
+                    {picked.rating.toFixed(1)}
+                  </span>
+                  <span className="text-slate-500">({picked.reviewCount.toLocaleString()} 則評論)</span>
+                </>
+              )}
               <span className="text-slate-300">•</span>
               <span className="font-semibold text-slate-700">
                 {priceObj?.symbol} {picked.avgCostText}
@@ -130,7 +165,7 @@ export const RandomPickerModal: React.FC<RandomPickerModalProps> = ({
 
             {picked.signatureDishes.length > 0 && (
               <p className="text-xs text-slate-700 bg-white/80 rounded-xl px-3 py-2 border border-orange-100">
-                <span className="font-semibold text-orange-700">推薦必點：</span>
+                <span className="font-semibold text-orange-700">分類 / 推薦：</span>
                 {picked.signatureDishes.join('、')}
               </p>
             )}
@@ -153,7 +188,7 @@ export const RandomPickerModal: React.FC<RandomPickerModalProps> = ({
               rel="noopener noreferrer"
               className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-semibold py-2.5 px-3 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition shadow-sm"
             >
-              Google Maps 導航
+              Google Maps 看評分/導航
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
           </div>

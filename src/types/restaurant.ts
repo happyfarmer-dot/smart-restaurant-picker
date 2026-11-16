@@ -35,6 +35,7 @@ export type AppMode = 'mock' | 'live';
 export interface Restaurant {
   id: string;
   placeId: string;
+  source?: 'osm' | 'mock' | 'google';
   name: string;
   cuisine: CuisineType;
   priceLevel: PriceLevel;

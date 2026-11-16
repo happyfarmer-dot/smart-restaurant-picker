@@ -26,6 +26,7 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
   const priceObj = PRICE_OPTIONS.find((p) => p.level === restaurant.priceLevel);
   const eta = formatDistanceAndEta(restaurant.distanceMeters ?? 0);
   const deepLink = buildGoogleMapsDeepLink(restaurant);
+  const isOsm = restaurant.source === 'osm';
 
   return (
     <article
@@ -63,13 +64,21 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
 
         {/* 星等 + 評論數 + 價位 */}
         <div className="flex items-center gap-2 mt-1.5 text-xs flex-wrap">
-          <span className="inline-flex items-center gap-0.5 font-bold text-amber-600">
-            <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-            {restaurant.rating.toFixed(1)}
-          </span>
-          <span className="text-slate-500">
-            ({restaurant.reviewCount.toLocaleString()} 則評論)
-          </span>
+          {isOsm ? (
+            <span className="inline-flex items-center gap-1 font-medium text-sky-700 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-100">
+              OpenStreetMap 實景收錄
+            </span>
+          ) : (
+            <>
+              <span className="inline-flex items-center gap-0.5 font-bold text-amber-600">
+                <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                {restaurant.rating.toFixed(1)}
+              </span>
+              <span className="text-slate-500">
+                ({restaurant.reviewCount.toLocaleString()} 則評論)
+              </span>
+            </>
+          )}
           <span className="text-slate-300">•</span>
           <span className="font-semibold text-slate-700">
             {priceObj?.symbol} · {restaurant.avgCostText}
@@ -87,7 +96,11 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
           }`}
         >
           <Clock className="w-3 h-3" />
-          {restaurant.isOpenNow ? `營業中 · ${restaurant.closingTimeText}` : restaurant.closingTimeText}
+          {isOsm
+            ? restaurant.closingTimeText
+            : restaurant.isOpenNow
+            ? `營業中 · ${restaurant.closingTimeText}`
+            : restaurant.closingTimeText}
         </span>
 
         <span className="inline-flex items-center gap-1 text-slate-600 font-medium">
@@ -126,7 +139,7 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
           onClick={(e) => e.stopPropagation()}
           className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-xl bg-slate-900 text-white hover:bg-orange-600 transition"
         >
-          在 Google Maps 開啟 / 導航
+          {isOsm ? '在 Google Maps 查看評分與導航' : '在 Google Maps 開啟 / 導航'}
           <ExternalLink className="w-3.5 h-3.5" />
         </a>
       </div>

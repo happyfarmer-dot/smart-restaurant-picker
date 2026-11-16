@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { RotateCcw, UtensilsCrossed } from 'lucide-react';
+import { ExternalLink, RotateCcw, UtensilsCrossed } from 'lucide-react';
 import type { Restaurant } from '../types/restaurant';
 import { RestaurantCard } from './RestaurantCard';
 
@@ -7,6 +7,7 @@ interface RestaurantListProps {
   restaurants: Restaurant[];
   isLoading: boolean;
   selectedId: string | null;
+  googleMapsAreaUrl: string;
   onSelect: (restaurant: Restaurant) => void;
   onExclude: (id: string) => void;
   onRelaxFilters: () => void;
@@ -16,6 +17,7 @@ export const RestaurantList: React.FC<RestaurantListProps> = ({
   restaurants,
   isLoading,
   selectedId,
+  googleMapsAreaUrl,
   onSelect,
   onExclude,
   onRelaxFilters,
@@ -29,10 +31,10 @@ export const RestaurantList: React.FC<RestaurantListProps> = ({
     }
   }, [selectedId]);
 
-  if (isLoading) {
+  if (isLoading && restaurants.length === 0) {
     return (
       <div className="space-y-3">
-        {[1, 2, 3].map((n) => (
+        {[1, 2, 3, 4].map((n) => (
           <div
             key={n}
             className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 animate-pulse"
@@ -57,25 +59,47 @@ export const RestaurantList: React.FC<RestaurantListProps> = ({
           <UtensilsCrossed className="w-5 h-5" />
         </div>
         <div className="space-y-1">
-          <h3 className="text-sm font-bold text-slate-800">找不到符合條件的餐廳</h3>
+          <h3 className="text-sm font-bold text-slate-800">目前圈選範圍與條件下找不到餐廳</h3>
           <p className="text-xs text-slate-500 leading-relaxed">
-            目前圈選的範圍可能太小，或星等／評論數／料理條件過於嚴格。
+            你可以放寬篩選條件、拉大半徑，或直接帶入此範圍座標到 Google Maps 查看所有餐飲店家。
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onRelaxFilters}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition cursor-pointer"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-          一鍵放寬篩選條件
-        </button>
+        <div className="flex flex-col gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onRelaxFilters}
+            className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-4 py-2.5 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            一鍵放寬篩選條件並擴大範圍
+          </button>
+          <a
+            href={googleMapsAreaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-4 py-2.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition"
+          >
+            直接在 Google Maps 搜此範圍
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
+      {/* 置頂：一鍵開啟 Google Maps 搜尋此圈選範圍 */}
+      <a
+        href={googleMapsAreaUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-sky-50 border border-sky-200 text-sky-900 hover:bg-sky-100 transition text-xs font-semibold"
+      >
+        <span>想直接看 Google Maps 真實星等與評論？點此開啟此圈選範圍</span>
+        <ExternalLink className="w-3.5 h-3.5 shrink-0 text-sky-700" />
+      </a>
+
       {restaurants.map((r) => (
         <RestaurantCard
           key={r.id}

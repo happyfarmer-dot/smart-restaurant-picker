@@ -1,4 +1,4 @@
-import type { LatLng, Restaurant } from '../types/restaurant';
+import type { FilterState, LatLng, Restaurant } from '../types/restaurant';
 
 const EARTH_RADIUS_M = 6371000;
 
@@ -19,7 +19,6 @@ export function haversineDistanceMeters(a: LatLng, b: LatLng): number {
 
 /**
  * Point-in-Polygon 射線法（Ray-Casting Algorithm）
- * 判斷目標座標點是否位於多邊形頂點陣列內部
  */
 export function isPointInPolygon(point: LatLng, polygon: LatLng[]): boolean {
   if (polygon.length < 3) return false;
@@ -57,8 +56,6 @@ export function getPolygonCentroid(polygon: LatLng[]): LatLng {
 
 /**
  * 計算多邊形的最小外接圓（Minimum Bounding Circle）
- * 用於將不規則手繪多邊形轉換為 Google Places API (New) searchNearby 所需的圓形 locationRestriction，
- * 再搭配前端 isPointInPolygon 精準剔除多邊形外的店家。
  */
 export function computeMinimumBoundingCircle(polygon: LatLng[]): {
   center: LatLng;
@@ -71,7 +68,6 @@ export function computeMinimumBoundingCircle(polygon: LatLng[]): {
     return { center: polygon[0], radiusMeters: 500 };
   }
 
-  // 以重心為初始圓心，找出最大半徑並做 Ritter's bounding circle 近似最佳化
   const centroid = getPolygonCentroid(polygon);
   let maxDist = 0;
   let farthestA = polygon[0];
@@ -83,7 +79,6 @@ export function computeMinimumBoundingCircle(polygon: LatLng[]): {
     }
   }
 
-  // 找離 farthestA 最遠的點 farthestB
   let spanDist = 0;
   let farthestB = farthestA;
   for (const p of polygon) {
@@ -100,7 +95,6 @@ export function computeMinimumBoundingCircle(polygon: LatLng[]): {
   };
   let radius = haversineDistanceMeters(center, farthestA);
 
-  // 確保所有頂點都在圓內
   for (const p of polygon) {
     const d = haversineDistanceMeters(center, p);
     if (d > radius) {
@@ -114,7 +108,6 @@ export function computeMinimumBoundingCircle(polygon: LatLng[]): {
     }
   }
 
-  // 加上 50 公尺緩衝，並限制於 Google Places API 上限 50000m
   return {
     center,
     radiusMeters: Math.min(50000, Math.max(200, Math.ceil(radius + 50))),
@@ -131,18 +124,58 @@ export function formatDistanceAndEta(meters: number): {
 } {
   const distanceText =
     meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
-  const walkMinutes = Math.max(1, Math.round(meters / 75)); // 約 4.5 km/h
-  const scooterMinutes = Math.max(1, Math.round(meters / 450)); // 市區騎車約 27 km/h
+  const walkMinutes = Math.max(1, Math.round(meters / 75));
+  const scooterMinutes = Math.max(1, Math.round(meters / 450));
   return { distanceText, walkMinutes, scooterMinutes };
 }
 
 /**
  * Google 官方標準深度連結（Deep Link）
+ * - 若具備真實 placeId，附上 query_place_id 精準定位該店家頁面
+ * - 若為 OSM 店家無 placeId，附上店家名稱與經緯度，讓 Google Maps 直接聚焦於該店家座標並搜尋
  */
 export function buildGoogleMapsDeepLink(restaurant: Restaurant): string {
-  const query = encodeURIComponent(`${restaurant.name} ${restaurant.address}`);
-  if (restaurant.placeId && !restaurant.placeId.startsWith('mock_')) {
+  const hasRealStreetAddress =
+    restaurant.address && !restaurant.address.startsWith('台灣（');
+
+  if (restaurant.placeId) {
+    const query = encodeURIComponent(
+      hasRealStreetAddress ? `${restaurant.name} ${restaurant.address}` : restaurant.name
+    );
     return `https://www.google.com/maps/search/?api=1&query=${query}&query_place_id=${encodeURIComponent(restaurant.placeId)}`;
   }
-  return `https://www.google.com/maps/search/?api=1&query=${query}&query_place_id=${encodeURIComponent(restaurant.placeId)}`;
+
+  if (hasRealStreetAddress) {
+    const query = encodeURIComponent(`${restaurant.name} ${restaurant.address}`);
+    return `https://www.google.com/maps/search/?api=1&query=${query}`;
+  }
+
+  return `https://www.google.com/maps/search/${encodeURIComponent(restaurant.name)}/@${restaurant.lat.toFixed(6)},${restaurant.lng.toFixed(6)},18z`;
+}
+
+/**
+ * 一鍵帶入圈選中心、半徑縮放層級與篩選條件，直接開啟 Google Maps 搜尋結果頁
+ */
+export function buildGoogleMapsAreaSearchUrl(
+  center: LatLng,
+  radiusMeters: number,
+  filters: FilterState
+): string {
+  const parts: string[] = [];
+  if (filters.cuisines.length > 0) {
+    parts.push(filters.cuisines.slice(0, 2).join(' '));
+  }
+  if (filters.searchQuery.trim()) {
+    parts.push(filters.searchQuery.trim());
+  }
+  if (parts.length === 0) {
+    parts.push('餐廳 美食');
+  } else {
+    parts.push('餐廳');
+  }
+  const zoom = Math.min(
+    18,
+    Math.max(13, Math.round(16.2 - Math.log2(Math.max(200, radiusMeters) / 400)))
+  );
+  return `https://www.google.com/maps/search/${encodeURIComponent(parts.join(' '))}/@${center.lat.toFixed(6)},${center.lng.toFixed(6)},${zoom}z`;
 }

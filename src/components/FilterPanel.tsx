@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Clock,
   Filter,
+  Info,
   RotateCcw,
   Search,
   SlidersHorizontal,
@@ -13,6 +14,7 @@ import {
   PRICE_OPTIONS,
   REVIEW_THRESHOLD_OPTIONS,
   SCENARIO_TAGS,
+  type AppMode,
   type CuisineType,
   type FilterState,
   type PriceLevel,
@@ -21,6 +23,7 @@ import {
 } from '../types/restaurant';
 
 interface FilterPanelProps {
+  appMode: AppMode;
   filters: FilterState;
   onChange: (next: FilterState) => void;
   onRelaxFilters: () => void;
@@ -29,6 +32,7 @@ interface FilterPanelProps {
 }
 
 export const FilterPanel: React.FC<FilterPanelProps> = ({
+  appMode,
   filters,
   onChange,
   onRelaxFilters,
@@ -89,7 +93,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
             className="w-4 h-4 rounded accent-orange-500 cursor-pointer"
           />
           <Clock className="w-3.5 h-3.5 text-emerald-600" />
-          僅顯示目前營業中
+          僅顯示營業中 / 未知時段
         </label>
 
         <div className="flex items-center gap-1.5">
@@ -100,9 +104,9 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
             className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-slate-50 text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-500/30 cursor-pointer"
           >
             <option value="recommended">綜合推薦</option>
+            <option value="distance">距離最近</option>
             <option value="rating">評分最高</option>
             <option value="reviews">評論數最多</option>
-            <option value="distance">距離最近</option>
           </select>
         </div>
       </div>
@@ -185,28 +189,46 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
 
       {/* 評分與可信度雙重過濾 */}
       <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-3">
+        {appMode === 'mock' && (
+          <div className="flex items-start gap-1.5 text-[11px] text-sky-700 bg-sky-50 border border-sky-100 rounded-lg p-2 leading-relaxed">
+            <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>
+              免 API 模式採用 OpenStreetMap 實景店家（無即時 Google 星等），因此不會隱藏無評分資料的店家。若需依 Google 星等過濾，請點上方「在 Google Maps 搜此範圍」或輸入 Google API Key。
+            </span>
+          </div>
+        )}
+
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
             <span className="font-bold text-slate-700 flex items-center gap-1">
               <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
               最低 Google 星等
             </span>
-            <span className="font-bold text-amber-600">{filters.minRating.toFixed(1)} 星以上</span>
+            <span className="font-bold text-amber-600">
+              {filters.minRating === 0 ? '不限' : `${filters.minRating.toFixed(1)} 星以上`}
+            </span>
           </div>
-          <input
-            type="range"
-            min={3.5}
-            max={4.8}
-            step={0.1}
-            value={filters.minRating}
-            onChange={(e) => onChange({ ...filters, minRating: Number(e.target.value) })}
-            className="w-full accent-orange-500 cursor-pointer"
-          />
-          <div className="flex justify-between text-[11px] text-slate-400">
-            <span>3.5★</span>
-            <span>4.0★</span>
-            <span>4.5★</span>
-            <span>4.8★</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onChange({ ...filters, minRating: 0 })}
+              className={`text-[11px] px-2 py-1 rounded-lg border cursor-pointer shrink-0 ${
+                filters.minRating === 0
+                  ? 'bg-orange-500 text-white border-orange-500 font-semibold'
+                  : 'bg-slate-50 text-slate-600 border-slate-200'
+              }`}
+            >
+              不限
+            </button>
+            <input
+              type="range"
+              min={3.5}
+              max={4.8}
+              step={0.1}
+              value={filters.minRating === 0 ? 3.5 : filters.minRating}
+              onChange={(e) => onChange({ ...filters, minRating: Number(e.target.value) })}
+              className="w-full accent-orange-500 cursor-pointer"
+            />
           </div>
         </div>
 
